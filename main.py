@@ -1,5 +1,4 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.constants import ChatMemberStatus
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -12,6 +11,7 @@ from datetime import datetime, timedelta
 import re
 import random
 import os
+
 
 class Karadevfacekid:
     def __init__(self, token: str, bad_words_file: str = "badwords.txt", log_file: str = "violations.log"):
@@ -33,7 +33,7 @@ class Karadevfacekid:
         self.violations = {}
         self.violation_messages = {}
         self.is_enabled = True
-        self.suspicious_users = {"Piv_pax"}
+        self.suspicious_users = {}
 
     def load_bad_words(self) -> list:
         try:
@@ -159,7 +159,6 @@ class Karadevfacekid:
             [InlineKeyboardButton("Включить бота", callback_data="mode_enable")],
             [InlineKeyboardButton("Отключить бота", callback_data="mode_disable")],
             [InlineKeyboardButton("Статус бота", callback_data="status")],
-            [InlineKeyboardButton("Очистить логи", callback_data="clearlog")],
             [InlineKeyboardButton("Помощь", callback_data="help")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -173,7 +172,8 @@ class Karadevfacekid:
         try:
             parts = update.message.text.split()
             if len(parts) < 2:
-                await update.message.reply_text("⚠️ Используйте команду так: /enemy add @username, /enemy list, /enemy delete all, /enemy delete @username")
+                await update.message.reply_text(
+                    "⚠️ Используйте команду так: /enemy add @username, /enemy list, /enemy delete all, /enemy delete @username")
                 return
 
             action = parts[1].lower()
@@ -197,7 +197,8 @@ class Karadevfacekid:
 
             elif action == "delete":
                 if len(parts) < 3:
-                    await update.message.reply_text("⚠️ Используйте команду так: /enemy delete all или /enemy delete @username")
+                    await update.message.reply_text(
+                        "⚠️ Используйте команду так: /enemy delete all или /enemy delete @username")
                     return
 
                 target = parts[2].lower()
@@ -210,10 +211,12 @@ class Karadevfacekid:
                         del self.suspicious_users[username]
                         await update.message.reply_text(f"✅ Пользователь @{username} удалён из списка подозрительных.")
                     else:
-                        await update.message.reply_text(f"⚠️ Пользователь @{username} не найден в списке подозрительных.")
+                        await update.message.reply_text(
+                            f"⚠️ Пользователь @{username} не найден в списке подозрительных.")
 
             else:
-                await update.message.reply_text("⚠️ Неизвестное действие. Используйте: /enemy add, /enemy list, /enemy delete")
+                await update.message.reply_text(
+                    "⚠️ Неизвестное действие. Используйте: /enemy add, /enemy list, /enemy delete")
 
         except Exception as e:
             print(f"🚨 Ошибка: {e}")
@@ -225,7 +228,8 @@ class Karadevfacekid:
 
         if query.data.startswith("ban_"):
             user_id = int(query.data.split("_")[1])
-            await context.bot.ban_chat_member(query.message.chat_id, user_id, until_date=datetime.now() + timedelta(days=3))
+            await context.bot.ban_chat_member(query.message.chat_id, user_id,
+                                              until_date=datetime.now() + timedelta(days=3))
             await query.edit_message_text(f"⛔ Пользователь забанен на 3 дня.")
         elif query.data.startswith("forgive_"):
             user_id = int(query.data.split("_")[1])
@@ -239,12 +243,6 @@ class Karadevfacekid:
         elif query.data == "status":
             status = "✅ Включён" if self.is_enabled else "⛔ Отключён"
             await query.edit_message_text(f"Статус бота: {status}")
-        elif query.data == "clearlog":
-            if os.path.exists(self.LOG_FILE):
-                os.remove(self.LOG_FILE)
-                await query.edit_message_text("🗑️ Логи с матами очищены.")
-            else:
-                await query.edit_message_text("⚠️ Логи с матами отсутствуют.")
         elif query.data == "help":
             help_text = """
                 📜 Доступные команды:
@@ -254,9 +252,10 @@ class Karadevfacekid:
                 • /status — показать текущий статус бота.
                 • /reload — перезагрузить список запрещённых слов.
                 • /hist @username [N] — показать статистику матов для пользователя (по умолчанию N=5).
-                • /clear [N] — удалить последние N сообщений (только для админов).
-                • /clearlog — очистить логи с матами (только для админов).
-                • /enemy add @username — добавить пользователя в список подозрительных (только для админов).
+                • /enemy add @username — добавить пользователя в список подозрительных.
+                • /enemy list — показать список подозрительных пользователей.
+                • /enemy delete all — удалить всех подозрительных пользователей.
+                • /enemy delete @username — удалить конкретного пользователя из списка.
                 • /help — показать это сообщение.
             """
             await query.edit_message_text(help_text)
