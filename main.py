@@ -34,6 +34,7 @@ class Karadevfacekid:
         self.violation_messages = {}
         self.is_enabled = True
         self.suspicious_users = {}
+        self.message_count = {}
 
     def load_bad_words(self) -> list:
         try:
@@ -245,13 +246,18 @@ class Karadevfacekid:
             status = "✅ Включён" if self.is_enabled else "⛔ Отключён"
             await query.edit_message_text(f"Статус бота: {status}")
         elif query.data == "clearlog":
-            if os.path.exists(self.LOG_FILE):
-                os.remove(self.LOG_FILE)
-                self.violations = {}
-                self.violation_messages = {}
-                await query.edit_message_text("🗑️ Логи с матами очищены.")
-            else:
-                await query.edit_message_text("⚠️ Логи с матами отсутствуют.")
+            try:
+                if os.path.exists(self.LOG_FILE):
+                    with open(self.LOG_FILE, "w", encoding="utf-8") as f:
+                        f.write("")
+                    self.violations = {}
+                    self.violation_messages = {}
+                    await query.edit_message_text("🗑️ Логи с матами очищены.")
+                else:
+                    await query.edit_message_text("⚠️ Логи с матами отсутствуют.")
+            except Exception as e:
+                print(f"🚨 Ошибка при очистке логов: {e}")
+                await query.edit_message_text("⚠️ Произошла ошибка при очистке логов.")
         elif query.data == "help":
             help_text = """
                 📜 Доступные команды:
@@ -266,6 +272,8 @@ class Karadevfacekid:
                 • /enemy list — показать список подозрительных пользователей.
                 • /enemy delete all — удалить всех подозрительных пользователей.
                 • /enemy delete @username — удалить конкретного пользователя из списка.
+                • /statistics @username — показать статистику пользователя.
+                • /stat @username — алиас для /statistics.
                 • /help — показать это сообщение.
             """
             await query.edit_message_text(help_text)
@@ -303,19 +311,107 @@ class Karadevfacekid:
             print(f"🚨 Ошибка при сканировании участников: {e}")
             await update.message.reply_text("⚠️ Произошла ошибка при сканировании участников.")
 
+
+
+    async def message_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self.is_enabled:
+            return
+
+        if not update.message or not update.message.text:
+            return
+
+        user = update.message.from_user
+        text = update.message.text
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        if user.username in self.message_count:
+            self.message_count[user.username] += 1
+        else:
+            self.message_count[user.username] = 1
+
+        if self.contains_bad_words(text):
+            try:
+                warning = random.choice(self.WARNINGS).format(username=user.username)
+                await update.message.reply_text(warning)
+                self.log_violation(user.username, text)
+
+                if user.username in self.violations:
+                    self.violations[user.username] += 1
+                    self.violation_messages[user.username].append((timestamp, text))
+                else:
+                    self.violations[user.username] = 1
+                    self.violation_messages[user.username] = [(timestamp, text)]
+            except Exception as e:
+                print(f"🚨 Ошибка: {e}")
+
+    async def statistics_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        try:
+            parts = update.message.text.split()
+            if len(parts) < 2:
+                await update.message.reply_text("⚠️ Используйте команду так: /statistics @username или /stat @username")
+                return
+
+            username = parts[1].replace("@", "")
+            chat_id = update.message.chat_id
+
+            user_status = await self.get_user_status(chat_id, username, context)
+            message_count = self.message_count.get(username, 0)
+            mat_count = self.violations.get(username, 0)
+            reputation = self.calculate_reputation(message_count, mat_count)
+            is_dangerous = username in self.suspicious_users
+
+            response = f"📊 Статистика @{username}:\n"
+            response += f"- Кол-во сообщений: {message_count}\n"
+            response += f"- Кол-во матов: {mat_count}\n"
+            response += f"- Репутация: {reputation}\n"
+            response += f"- Положение в чате: {user_status}\n"
+            response += f"- Опасный ли пользователь: {'Да' if is_dangerous else 'Нет'}\n"
+
+            await update.message.reply_text(response)
+        except Exception as e:
+            print(f"🚨 Ошибка: {e}")
+            await update.message.reply_text("⚠️ Произошла ошибка при получении статистики.")
+
+    async def get_user_status(self, chat_id: int, username: str, context: ContextTypes.DEFAULT_TYPE) -> str:
+        try:
+            admins = await context.bot.get_chat_administrators(chat_id)
+            for admin in admins:
+                if admin.user.username == username:
+                    return "Администратор"
+            return "Обычный участник"
+        except Exception as e:
+            print(f"🚨 Ошибка при получении статуса пользователя: {e}")
+            return "Неизвестно"
+
+    def calculate_reputation(self, message_count: int, mat_count: int) -> str:
+        if message_count == 0:
+            return "Нет данных"
+        ratio = (message_count - mat_count) / message_count
+        if ratio >= 0.9:
+            return "Отличная"
+        elif ratio >= 0.7:
+            return "Хорошая"
+        elif ratio >= 0.5:
+            return "Средняя"
+        else:
+            return "Плохая"
+
     def run(self):
         app = ApplicationBuilder().token(self.TOKEN).build()
 
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.message_handler))
         app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, self.greet_new_members))
         app.add_handler(CommandHandler("reload", self.reload_command))
+        app.add_handler(CommandHandler("clearlog", self.help_command))
         app.add_handler(CommandHandler("hist", self.history_command))
         app.add_handler(CommandHandler("mode", self.mode_command))
         app.add_handler(CommandHandler("status", self.status_command))
         app.add_handler(CommandHandler("help", self.help_command))
         app.add_handler(CommandHandler("enemy", self.enemy_command))
-        app.add_handler(CallbackQueryHandler(self.button_handler))
         app.add_handler(CommandHandler("scan", self.scan_members))
+        app.add_handler(CommandHandler("statistics", self.statistics_command))
+        app.add_handler(CommandHandler("stat", self.statistics_command))
+        app.add_handler(CallbackQueryHandler(self.button_handler))
 
         print("🤖 Бот запущен!")
         app.run_polling()
