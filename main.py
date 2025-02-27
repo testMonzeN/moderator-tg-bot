@@ -159,6 +159,7 @@ class Karadevfacekid:
             [InlineKeyboardButton("Включить бота", callback_data="mode_enable")],
             [InlineKeyboardButton("Отключить бота", callback_data="mode_disable")],
             [InlineKeyboardButton("Статус бота", callback_data="status")],
+            [InlineKeyboardButton("Очистить логи", callback_data="clearlog")],
             [InlineKeyboardButton("Помощь", callback_data="help")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
@@ -243,6 +244,14 @@ class Karadevfacekid:
         elif query.data == "status":
             status = "✅ Включён" if self.is_enabled else "⛔ Отключён"
             await query.edit_message_text(f"Статус бота: {status}")
+        elif query.data == "clearlog":
+            if os.path.exists(self.LOG_FILE):
+                os.remove(self.LOG_FILE)
+                self.violations = {}
+                self.violation_messages = {}
+                await query.edit_message_text("🗑️ Логи с матами очищены.")
+            else:
+                await query.edit_message_text("⚠️ Логи с матами отсутствуют.")
         elif query.data == "help":
             help_text = """
                 📜 Доступные команды:
@@ -252,6 +261,7 @@ class Karadevfacekid:
                 • /status — показать текущий статус бота.
                 • /reload — перезагрузить список запрещённых слов.
                 • /hist @username [N] — показать статистику матов для пользователя (по умолчанию N=5).
+                • /clearlog — очистить логи с матами.
                 • /enemy add @username — добавить пользователя в список подозрительных.
                 • /enemy list — показать список подозрительных пользователей.
                 • /enemy delete all — удалить всех подозрительных пользователей.
@@ -312,5 +322,5 @@ class Karadevfacekid:
 
 
 if __name__ == "__main__":
-    bot = Karadevfacekid(token="6424644818:AAFOqGJHy4kgYksY4JLo3Mp8s2MTwlpsSSk")
+    bot = Karadevfacekid(token="token")
     bot.run()
