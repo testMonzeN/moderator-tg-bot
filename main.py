@@ -35,6 +35,8 @@ class Karadevfacekid:
         self.is_enabled = True
         self.suspicious_users = {}
         self.message_count = {}
+        self.warning_count = {}
+        self.WARNING_LIMIT = 5
 
     def load_bad_words(self) -> list:
         try:
@@ -74,11 +76,33 @@ class Karadevfacekid:
         text = update.message.text
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+        self.message_count[user.username] = self.message_count.get(user.username, 0) + 1
+
         if self.contains_bad_words(text):
             try:
                 warning = random.choice(self.WARNINGS).format(username=user.username)
                 await update.message.reply_text(warning)
+
                 self.log_violation(user.username, text)
+
+                self.warning_count[user.username] = self.warning_count.get(user.username, 0) + 1
+
+                if self.warning_count[user.username] >= self.WARNING_LIMIT:
+                    await context.bot.ban_chat_member(
+                        chat_id=update.message.chat_id,
+                        user_id=user.id,
+                        until_date=datetime.now() + timedelta(days=1)
+                    )
+                    await update.message.reply_text(
+                        f"⛔ Пользователь @{user.username} был забанен на 1 день за превышение лимита предупреждений."
+                    )
+                    self.warning_count[user.username] = 0
+                else:
+                    warnings_left = self.WARNING_LIMIT - self.warning_count[user.username]
+                    await update.message.reply_text(
+                        f"⚠️ @{user.username}, у вас {self.warning_count[user.username]}/{self.WARNING_LIMIT} предупреждений. "
+                        f"Осталось {warnings_left} предупреждений до бана."
+                    )
 
                 if user.username in self.violations:
                     self.violations[user.username] += 1
@@ -87,7 +111,7 @@ class Karadevfacekid:
                     self.violations[user.username] = 1
                     self.violation_messages[user.username] = [(timestamp, text)]
             except Exception as e:
-                print(f"🚨 Ошибка: {e}")
+                print(f"🚨 Ошибка при обработке сообщения: {e}")
 
     async def greet_new_members(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.is_enabled:
@@ -418,5 +442,5 @@ class Karadevfacekid:
 
 
 if __name__ == "__main__":
-    bot = Karadevfacekid(token="token")
+    bot = Karadevfacekid(token="6424644818:AAFOqGJHy4kgYksY4JLo3Mp8s2MTwlpsSSk")
     bot.run()
