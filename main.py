@@ -442,5 +442,5 @@ class Karadevfacekid:
 
 
 if __name__ == "__main__":
-    bot = Karadevfacekid(token="6424644818:AAFOqGJHy4kgYksY4JLo3Mp8s2MTwlpsSSk")
+    bot = Karadevfacekid(token="")
     bot.run()
