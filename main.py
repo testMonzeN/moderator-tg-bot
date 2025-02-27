@@ -1,4 +1,5 @@
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.constants import ChatMemberStatus
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -106,6 +107,8 @@ class Karadevfacekid:
                 greeting = random.choice(self.GREETINGS).format(username=member.username)
                 await update.message.reply_text(greeting)
 
+        await self.scan_members(update, context)
+
     async def reload_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self.BAD_WORDS = self.load_bad_words()
         await update.message.reply_text(f"♻️ Обновлено! Запрещенных слов: {len(self.BAD_WORDS)}")
@@ -163,24 +166,55 @@ class Karadevfacekid:
         await update.message.reply_text("📜 Выберите действие:", reply_markup=reply_markup)
 
     async def enemy_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        try:
-            if not await self.is_admin(update, context):
-                await update.message.reply_text("⛔ У вас нет прав для выполнения этой команды.")
-                return
+        if not await self.is_admin(update, context):
+            await update.message.reply_text("⛔ У вас нет прав для выполнения этой команды.")
+            return
 
+        try:
             parts = update.message.text.split()
-            if len(parts) < 3:
-                await update.message.reply_text("⚠️ Используйте команду так: /enemy add @username")
+            if len(parts) < 2:
+                await update.message.reply_text("⚠️ Используйте команду так: /enemy add @username, /enemy list, /enemy delete all, /enemy delete @username")
                 return
 
             action = parts[1].lower()
-            username = parts[2].replace("@", "")
 
             if action == "add":
-                self.suspicious_users.add(username)
+                if len(parts) < 3:
+                    await update.message.reply_text("⚠️ Используйте команду так: /enemy add @username")
+                    return
+                username = parts[2].replace("@", "")
+                self.suspicious_users[username] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 await update.message.reply_text(f"✅ Пользователь @{username} добавлен в список подозрительных.")
+
+            elif action == "list":
+                if not self.suspicious_users:
+                    await update.message.reply_text("✅ Список подозрительных пользователей пуст.")
+                else:
+                    response = "📜 Список подозрительных пользователей:\n"
+                    for username, date_added in self.suspicious_users.items():
+                        response += f"• @{username} (добавлен: {date_added})\n"
+                    await update.message.reply_text(response)
+
+            elif action == "delete":
+                if len(parts) < 3:
+                    await update.message.reply_text("⚠️ Используйте команду так: /enemy delete all или /enemy delete @username")
+                    return
+
+                target = parts[2].lower()
+                if target == "all":
+                    self.suspicious_users.clear()
+                    await update.message.reply_text("✅ Все подозрительные пользователи удалены из списка.")
+                else:
+                    username = target.replace("@", "")
+                    if username in self.suspicious_users:
+                        del self.suspicious_users[username]
+                        await update.message.reply_text(f"✅ Пользователь @{username} удалён из списка подозрительных.")
+                    else:
+                        await update.message.reply_text(f"⚠️ Пользователь @{username} не найден в списке подозрительных.")
+
             else:
-                await update.message.reply_text("⚠️ Неизвестное действие. Используйте: /enemy add @username")
+                await update.message.reply_text("⚠️ Неизвестное действие. Используйте: /enemy add, /enemy list, /enemy delete")
+
         except Exception as e:
             print(f"🚨 Ошибка: {e}")
             await update.message.reply_text("⚠️ Произошла ошибка при выполнении команды.")
@@ -214,7 +248,7 @@ class Karadevfacekid:
         elif query.data == "help":
             help_text = """
                 📜 Доступные команды:
-                
+
                 • /mode enable — включить бота.
                 • /mode disable — отключить бота.
                 • /status — показать текущий статус бота.
@@ -233,6 +267,33 @@ class Karadevfacekid:
         admins = await context.bot.get_chat_administrators(chat_id)
         return any(admin.user.id == user_id for admin in admins)
 
+    async def scan_members(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self.is_admin(update, context):
+            return
+
+        try:
+            chat_id = update.message.chat_id
+            members = []
+
+            admins = await context.bot.get_chat_administrators(chat_id)
+            members.extend(admin.user for admin in admins)
+
+            suspicious_found = []
+            for member in members:
+                if member.username in self.suspicious_users:
+                    suspicious_found.append(f"@{member.username}")
+
+            if suspicious_found:
+                response = "⚠️ Найдены подозрительные участники:\n"
+                response += "\n".join(suspicious_found)
+            else:
+                response = "✅ Подозрительные участники не найдены."
+
+            await update.message.reply_text(response)
+        except Exception as e:
+            print(f"🚨 Ошибка при сканировании участников: {e}")
+            await update.message.reply_text("⚠️ Произошла ошибка при сканировании участников.")
+
     def run(self):
         app = ApplicationBuilder().token(self.TOKEN).build()
 
@@ -245,10 +306,12 @@ class Karadevfacekid:
         app.add_handler(CommandHandler("help", self.help_command))
         app.add_handler(CommandHandler("enemy", self.enemy_command))
         app.add_handler(CallbackQueryHandler(self.button_handler))
+        app.add_handler(CommandHandler("scan", self.scan_members))
 
         print("🤖 Бот запущен!")
         app.run_polling()
 
+
 if __name__ == "__main__":
-    bot = Karadevfacekid(token="YOUR_TOKEN")
+    bot = Karadevfacekid(token="6424644818:AAFOqGJHy4kgYksY4JLo3Mp8s2MTwlpsSSk")
     bot.run()
