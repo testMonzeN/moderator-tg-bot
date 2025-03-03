@@ -1,4 +1,4 @@
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, error
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
@@ -19,26 +19,36 @@ class Karadevfacekid:
         self.BAD_WORDS_FILE = bad_words_file
         self.LOG_FILE = log_file
         self.BAD_WORDS = self.load_bad_words()
+        self.GREETINGS = [
+            "Добро пожаловать, {username}! 🎉",
+            "Привет, {username}! Рады видеть тебя в нашей группе! 😊",
+            "{username}, добро пожаловать в наш уютный чат! 🥳"
+        ]
         self.WARNINGS = [
             "@{username}, у нас запрещены такие выражения! ⚠️",
             "Эй, @{username}, следи за языком! 🚫",
             "@{username}, это слово запрещено в нашем чате!",
             "Ой, @{username}, так нельзя выражаться! 🙊"
         ]
-        self.GREETINGS = [
-            "Добро пожаловать, {username}! 🎉",
-            "Привет, {username}! Рады видеть тебя в нашей группе! 😊",
-            "{username}, добро пожаловать в наш уютный чат! 🥳"
-        ]
+
+        self.BAN_DURATIONS = {
+            "suspicious_user": 3,
+            "exceed_warning_limit": 1,
+        }
+        self.BAN_DURATION = 1
         self.violations = {}
         self.violation_messages = {}
-        self.is_enabled = True
         self.suspicious_users = {}
         self.message_count = {}
         self.warning_count = {}
+
         self.WARNING_LIMIT = 5
 
-    def load_bad_words(self) -> list:
+        self.is_enabled = True
+        self.total_check_mode = False
+
+
+    def load_bad_words(self):
         try:
             with open(self.BAD_WORDS_FILE, "r", encoding="utf-8") as file:
                 words = [line.strip().lower() for line in file if line.strip()]
@@ -47,6 +57,54 @@ class Karadevfacekid:
             print(f"🚨 Ошибка: {e}")
             return []
 
+    def contains_bad_words(self, text: str) -> bool:
+        try:
+            clean_text = text.lower()
+
+            for word in self.BAD_WORDS:
+                if self.total_check_mode:
+                    pattern = ""
+                    for char in word:
+                        if char.isalpha():
+                            pattern += f"{char}+[^а-я]*"
+                        else:
+                            pattern += re.escape(char)
+                    pattern = pattern.rstrip("[^а-я]*")
+                else:
+                    pattern = re.sub(r"(\w)", r"\1+", word)
+                if re.search(pattern, clean_text):
+                    return True
+            return False
+        except Exception as e:
+            print(f"🚨 Ошибка проверки: {e}")
+            return False
+
+
+    async def total_check_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self.is_admin(update, context):
+            await update.message.reply_text("⛔ У вас нет прав для выполнения этой команды.")
+            return
+        try:
+            action = context.args[0].lower() if context.args else None
+
+            if action == "on":
+                self.total_check_mode = True
+                await update.message.reply_text(
+                    "✅ Режим тотальной проверки включён. Бот будет реагировать на слова с пробелами, дефисами и другими символами.")
+            elif action == "off":
+                self.total_check_mode = False
+                await update.message.reply_text(
+                    "⛔ Режим тотальной проверки выключен. Бот будет реагировать только на слова без пробелов и дефисов.")
+            elif action == "status":
+                status = "включён.\n 🤝💪Да здравствует Северная Корея!💪🤝\n 👋 Привет Ким Чен Ын! ❤" if self.total_check_mode else "выключен. \n Спите спокойно."
+                await update.message.reply_text(f"📊 Режим тотальной проверки: {status}")
+            else:
+                await update.message.reply_text(
+                    "⚠️ Используйте команду так: /totalcheck on, /totalcheck off или /totalcheck status")
+        except Exception as e:
+            print(f"🚨 Ошибка: {e}")
+            await update.message.reply_text("⚠️ Произошла ошибка при выполнении команды.")
+
     def log_violation(self, username: str, text: str):
         try:
             with open(self.LOG_FILE, "a", encoding="utf-8") as f:
@@ -54,16 +112,6 @@ class Karadevfacekid:
         except Exception as e:
             print(f"⚠️ Ошибка записи в лог: {e}")
 
-    def contains_bad_words(self, text: str) -> bool:
-        try:
-            clean_text = re.sub(r"[^\w\s]", "", text.lower())
-            return any(
-                re.search(rf"\b{re.escape(word)}\b", clean_text)
-                for word in self.BAD_WORDS
-            )
-        except Exception as e:
-            print(f"🚨 Ошибка проверки: {e}")
-            return False
 
     async def message_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self.is_enabled:
@@ -73,11 +121,21 @@ class Karadevfacekid:
             return
 
         user = update.message.from_user
+
+        # Проверка на опасных пользователей
+        if user.username and user.username.lower() in [u.lower() for u in self.suspicious_users]:
+            try:
+                await update.message.delete()
+                await self._ban_user(context, update.message.chat_id, user)
+                return
+            except error.BadRequest as e:
+                print(f"⚠️ Ошибка удаления сообщения: {e}")
+        user = update.message.from_user
         text = update.message.text
+
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
         self.message_count[user.username] = self.message_count.get(user.username, 0) + 1
-
         if self.contains_bad_words(text):
             try:
                 warning = random.choice(self.WARNINGS).format(username=user.username)
@@ -88,13 +146,13 @@ class Karadevfacekid:
                 self.warning_count[user.username] = self.warning_count.get(user.username, 0) + 1
 
                 if self.warning_count[user.username] >= self.WARNING_LIMIT:
+                    print(self.warning_count[user.username])
                     await context.bot.ban_chat_member(
                         chat_id=update.message.chat_id,
                         user_id=user.id,
-                        until_date=datetime.now() + timedelta(days=1)
-                    )
+                        until_date=datetime.now() + timedelta(days=self.BAN_DURATIONS['exceed_warning_limit']))
                     await update.message.reply_text(
-                        f"⛔ Пользователь @{user.username} был забанен на 1 день за превышение лимита предупреждений."
+                        f"⛔ Пользователь @{user.username} был забанен на {self.BAN_DURATIONS['exceed_warning_limit']} дня за превышение лимита предупреждений."
                     )
                     self.warning_count[user.username] = 0
                 else:
@@ -119,20 +177,21 @@ class Karadevfacekid:
 
         for member in update.message.new_chat_members:
             if member.username in self.suspicious_users:
-                keyboard = [
-                    [InlineKeyboardButton("Да", callback_data=f"ban_{member.id}")],
-                    [InlineKeyboardButton("Нет", callback_data=f"forgive_{member.id}")]
-                ]
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                await update.message.reply_text(
-                    f"⚠️ Выгнать ли пользователя @{member.username}? (да/нет)",
-                    reply_markup=reply_markup
-                )
+                try:
+                    await context.bot.ban_chat_member(
+                        chat_id=update.message.chat_id,
+                        user_id=member.id,
+                        until_date=datetime.now() + timedelta(days=self.BAN_DURATIONS['suspicious_user']))
+                    await update.message.reply_text(
+                        f"⛔ Пользователь @{member.username} был забанен на {self.BAN_DURATIONS['suspicious_user']}, так как находится в списке подозрительных."
+                    )
+                except Exception as e:
+                    print(f"🚨 Ошибка при бане пользователя: {e}")
+                    await update.message.reply_text("⚠️ Не удалось забанить пользователя.")
             else:
                 greeting = random.choice(self.GREETINGS).format(username=member.username)
                 await update.message.reply_text(greeting)
 
-        await self.scan_members(update, context)
 
     async def reload_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         self.BAD_WORDS = self.load_bad_words()
@@ -178,6 +237,22 @@ class Karadevfacekid:
     async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         status = "✅ Включён" if self.is_enabled else "⛔ Отключён"
         await update.message.reply_text(f"Статус бота: {status}")
+
+    async def set_warning_limit_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not await self.is_admin(update, context):
+            await update.message.reply_text("⛔ У вас нет прав для выполнения этой команды.")
+            return
+
+        try:
+            new_limit = int(context.args[0])
+            if new_limit < 1:
+                await update.message.reply_text("⚠️ Лимит предупреждений должен быть больше 0.")
+                return
+
+            self.WARNING_LIMIT = new_limit
+            await update.message.reply_text(f"✅ Лимит предупреждений изменён на {new_limit}.")
+        except (IndexError, ValueError):
+            await update.message.reply_text("⚠️ Используйте команду так: /limit <число>.")
 
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [
@@ -252,15 +327,7 @@ class Karadevfacekid:
         query = update.callback_query
         await query.answer()
 
-        if query.data.startswith("ban_"):
-            user_id = int(query.data.split("_")[1])
-            await context.bot.ban_chat_member(query.message.chat_id, user_id,
-                                              until_date=datetime.now() + timedelta(days=3))
-            await query.edit_message_text(f"⛔ Пользователь забанен на 3 дня.")
-        elif query.data.startswith("forgive_"):
-            user_id = int(query.data.split("_")[1])
-            await query.edit_message_text(f"⚠️ Пользователь прощён, но находится под наблюдением.")
-        elif query.data == "mode_enable":
+        if query.data == "mode_enable":
             self.is_enabled = True
             await query.edit_message_text("✅ Бот включён. Все функции активны.")
         elif query.data == "mode_disable":
@@ -308,65 +375,6 @@ class Karadevfacekid:
         admins = await context.bot.get_chat_administrators(chat_id)
         return any(admin.user.id == user_id for admin in admins)
 
-    async def scan_members(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not await self.is_admin(update, context):
-            return
-
-        try:
-            chat_id = update.message.chat_id
-            members = []
-
-            admins = await context.bot.get_chat_administrators(chat_id)
-            members.extend(admin.user for admin in admins)
-
-            suspicious_found = []
-            for member in members:
-                if member.username in self.suspicious_users:
-                    suspicious_found.append(f"@{member.username}")
-
-            if suspicious_found:
-                response = "⚠️ Найдены подозрительные участники:\n"
-                response += "\n".join(suspicious_found)
-            else:
-                response = "✅ Подозрительные участники не найдены."
-
-            await update.message.reply_text(response)
-        except Exception as e:
-            print(f"🚨 Ошибка при сканировании участников: {e}")
-            await update.message.reply_text("⚠️ Произошла ошибка при сканировании участников.")
-
-
-
-    async def message_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if not self.is_enabled:
-            return
-
-        if not update.message or not update.message.text:
-            return
-
-        user = update.message.from_user
-        text = update.message.text
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        if user.username in self.message_count:
-            self.message_count[user.username] += 1
-        else:
-            self.message_count[user.username] = 1
-
-        if self.contains_bad_words(text):
-            try:
-                warning = random.choice(self.WARNINGS).format(username=user.username)
-                await update.message.reply_text(warning)
-                self.log_violation(user.username, text)
-
-                if user.username in self.violations:
-                    self.violations[user.username] += 1
-                    self.violation_messages[user.username].append((timestamp, text))
-                else:
-                    self.violations[user.username] = 1
-                    self.violation_messages[user.username] = [(timestamp, text)]
-            except Exception as e:
-                print(f"🚨 Ошибка: {e}")
 
     async def statistics_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
@@ -432,9 +440,11 @@ class Karadevfacekid:
         app.add_handler(CommandHandler("status", self.status_command))
         app.add_handler(CommandHandler("help", self.help_command))
         app.add_handler(CommandHandler("enemy", self.enemy_command))
-        app.add_handler(CommandHandler("scan", self.scan_members))
         app.add_handler(CommandHandler("statistics", self.statistics_command))
         app.add_handler(CommandHandler("stat", self.statistics_command))
+        app.add_handler(CommandHandler("totalcheck", self.total_check_command))
+        app.add_handler(CommandHandler("tc", self.total_check_command))
+        app.add_handler(CommandHandler("limit", self.set_warning_limit_command))
         app.add_handler(CallbackQueryHandler(self.button_handler))
 
         print("🤖 Бот запущен!")
@@ -442,5 +452,5 @@ class Karadevfacekid:
 
 
 if __name__ == "__main__":
-    bot = Karadevfacekid(token="")
+    bot = Karadevfacekid(token="6424644818:AAFOqGJHy4kgYksY4JLo3Mp8s2MTwlpsSSk")
     bot.run()
