@@ -122,7 +122,6 @@ class Karadevfacekid:
 
         user = update.message.from_user
 
-        # Проверка на опасных пользователей
         if user.username and user.username.lower() in [u.lower() for u in self.suspicious_users]:
             try:
                 await update.message.delete()
@@ -452,5 +451,5 @@ class Karadevfacekid:
 
 
 if __name__ == "__main__":
-    bot = Karadevfacekid(token="6424644818:AAFOqGJHy4kgYksY4JLo3Mp8s2MTwlpsSSk")
+    bot = Karadevfacekid(token="")
     bot.run()
